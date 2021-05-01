@@ -1,0 +1,114 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="技术分享 | Node.js | kubernetes | ansible | Docker | DevOps | 思维与认知"><title>微服务设计模式之API 网关 | 须臾之学</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=1.0.0"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/normalize.css/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/purecss/build/pure-min.min.css"><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/purecss/build/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"></script><link rel="icon" mask="" sizes="any" href="/favicon.ico"><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"><link rel="alternate" type="application/atom+xml" href="/atom.xml"><script>(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+ga('create','UA-91452326-1','auto');ga('send','pageview');
+</script><script type="text/javascript" src="//cdn.jsdelivr.net/npm/clipboard/dist/clipboard.min.js"></script><script type="text/javascript" src="//cdn.jsdelivr.net/gh/codeseven/toastr/build/toastr.min.js"></script><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/codeseven/toastr/build/toastr.min.css"><meta name="generator" content="Hexo 5.3.0"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">微服务设计模式之API 网关</h1><a id="logo" href="/.">须臾之学</a><p class="description">别瞎想，多走走，多看书</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a><a href="/atom.xml"><i class="fa fa-rss"> 订阅</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">微服务设计模式之API 网关</h1><div class="post-meta">2018-07-15<span class="post-time"><span class="post-meta-item-text"> | </span><span class="post-meta-item-icon"><i class="fa fa-keyboard-o"></i><span class="post-count"> 2.1k</span><span class="post-meta-item-text"> 字</span></span></span><span class="post-time"> | <span class="post-meta-item-icon"><i class="fa fa-clock-o"></i><span class="post-count"> 8</span><span class="post-meta-item-text"> 分钟</span></span></span></div><div class="post-content"><!-- en_title: microsevices-design-pattern-api-gateway -->
+
+<h3 id="简介"><a href="#简介" class="headerlink" title="简介"></a>简介</h3><p>API 网关是目前非常成熟的一种微服务与外界通讯方式的一种选型，当前你的架构是从单体架构 <code>Monolithic</code> 迁移过来的时候，你会发现新的服务无法很好地从旧有系统中接管流量。</p>
+<p>这个接管，或者说迁移的过程很复杂，也很危险，一般我们也会从小流量的非核心服务开始拆，拆分完之后，你就会发现问题了：流量怎么导到新服务上面去呢？</p>
+<a id="more"></a>
+
+<p>一种选择是在原服务上将数据转发至新服务，但是这也有问题：新服务其实相当于没有完全拆分出去，当任何一方出问题的时候，其它服务也会受影响。</p>
+<p>另一种选择是会从软负载均衡上修改配置来达到拆分的目的，但是配置的管理是个大难题，一旦出了问题，影响的可能就是某个机房或者整站的服务稳定。另外，当拆分越来越多的时候，问题也随之而增加：复杂度太高，每次修改都是提心吊胆。</p>
+<p>于是，API 网关就可以承担这个关键角色了，它将所有的微服务结合在一起，对外屏蔽细节（外部不需要知道是哪些微服务提供了数据），作为一个单点对外提供服务。不知道你想起了什么没有，对，就是设计模式中的经典：<strong>Facade 模式</strong>。</p>
+<p><img src="http://microservices.io/i/apigateway.jpg"></p>
+<p>同时还有一种差异版本：<strong>BFF</strong>，也就是为每个客户端单独建立不同的 API 网关。</p>
+<p><img src="http://microservices.io/i/bffe.png"></p>
+<p>好了，既然 API 网关那么好，接下来该怎么做呢？当然是挑选合适的网关了。</p>
+<h3 id="选型需求"><a href="#选型需求" class="headerlink" title="选型需求"></a>选型需求</h3><p>在挑选之前，我们需要明确自己的需求，我们需要的网关它至少需要有以下核心功能：</p>
+<ol>
+<li> 强悍的负载均衡能力；</li>
+<li> 支持动态服务管理服务，最好能跟服务发现结合在一起；</li>
+<li> 支持故障控制：健康检查、限流、熔断、重试；</li>
+<li> 详细的监控指标（比如支持 Prometheus）；</li>
+<li> 日志聚合（其实这个应该说是基本功能）；</li>
+</ol>
+<p>附加功能：</p>
+<ol>
+<li> 支持分布式追踪，支持 Opentracing；</li>
+<li> 金丝雀发布，灰度发布，A/B 测试；</li>
+<li> 统一认证：JWT，OAuth，Basic auth 等；</li>
+<li> HTTP 缓存；</li>
+<li> 请求、返回内容的显示以及修改；</li>
+<li> 请求限制：机器人检测、黑白 IP 名单；</li>
+</ol>
+<h3 id="几个推荐选型"><a href="#几个推荐选型" class="headerlink" title="几个推荐选型"></a>几个推荐选型</h3><p>个人认为，网关作为微服务架构里面的基石应用，应该选用接近底层以及性能比较高的语言去实现，比如 C/C++，Golang 以及 Rust 等。</p>
+<p>目前比较成熟以及用的比较广泛的网关有以下几种：</p>
+<ul>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/Kong/kong">GitHub - Kong/kong</a>：基于 OpenResty 那一套做的，依赖于 Nginx 强悍的性能，添加了动态服务管理功能，以及插件机制，语言是 lua ，假如自己拓展需要学习新语言；</li>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/TykTechnologies/tyk">GitHub - TykTechnologies/tyk</a>：用 Golang 实现的网关，如果团队使用 Golang 技术栈，到时可以考虑下；</li>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/Netflix/zuul">GitHub - Netflix/zuul</a>：用 Java 实现的网关，目前看来只适合 Java 技术栈；</li>
+</ul>
+<p>这里抛开最后一个不谈，其中前两个是目前用得比较广泛的，这两者几乎就是市场的老大与老二了。</p>
+<p>除了以上几个，另外还有几个网关值得留意：</p>
+<ul>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/fagongzi/gateway">fagongzi/gateway</a>：国人用 Golang 实现的的 gateway，可以看看，假如东西确实很不错，再加上之后能运营好，做成收费服务，前途可期；</li>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/hellofresh/janus">hellofresh/janus</a>：也是让人眼前一亮的网关，比如支持 Opentracing 以及 HTTP/2；</li>
+</ul>
+<h3 id="Kong-vs-Tyk"><a href="#Kong-vs-Tyk" class="headerlink" title="Kong vs Tyk"></a>Kong vs Tyk</h3><p>关于两者的比较，有好事者在两个产品的社区里面发了相同的帖子（大家好好学习这位同学，非常机智）：</p>
+<ul>
+<li>  <a target="_blank" rel="noopener" href="https://discuss.konghq.com/t/api-gateway-comparison-kong-vs-tyk/534">https://discuss.konghq.com/t/api-gateway-comparison-kong-vs-tyk/534</a></li>
+<li>  <a target="_blank" rel="noopener" href="https://community.tyk.io/t/comparison-between-tyk-and-kong/2364">https://community.tyk.io/t/comparison-between-tyk-and-kong/2364</a></li>
+</ul>
+<p>Kong 的社区回复：</p>
+<blockquote>
+<ol>
+<li> Kong 的功能丰富、插件齐全；</li>
+<li> 进可当做 Ingress 接管入口中央集权制，退可当 Mesh 去中心化分封制；</li>
+<li> Nginx + lua 性能杠杠的，扛起了全球 10% 的流量，连 CloudFlare 跟我们用的都是一样的技术栈，而且 lua 也很容易学习；</li>
+<li> 市场上独领风骚；</li>
+<li> 基准测试中是最快的；</li>
+<li> 心动了没，赶紧找我们销售；</li>
+</ol>
+</blockquote>
+<p>Tyk 的社区回复：</p>
+<blockquote>
+<ol>
+<li> 客户支持快；</li>
+<li> Kong 的插件只能用 lua 写，Tyk 则不然，lua、Python、JS 统统支持，另外 插件里面的 gRPC 也是支持的；</li>
+<li> Kong 依赖于 Nginx，假如 Nginx 出了 bug，他们很难修复，Tyk 则不然，全部技术栈都是他们可控的；</li>
+<li> 两者的性能差不多，2k qps 完全不是问题，能满足大部分需求；</li>
+<li> Kong 的 UI 是企业版才有的，Tyk 免费用；</li>
+<li> 我们不靠 VC 支持，玩的是长线战略；</li>
+</ol>
+</blockquote>
+<p>然后再看看一个『第三方』的测评：</p>
+<blockquote>
+<p>这里插一句：之所以打引号，是因为觉得他们的图表是偏向于 Kong 的，在那个最明显的对比图中，如果不仔细看，会以为 Kong 的性能是 Tyk 的两倍。</p>
+</blockquote>
+<p><a target="_blank" rel="noopener" href="https://www.bbva.com/en/api-gateways-kong-vs-tyk/">https://www.bbva.com/en/api-gateways-kong-vs-tyk/</a></p>
+<p>从结果来看，Kong 的性能更胜一筹：超出约 <strong>25%**，而 Tyk 在去掉一些插件之后的性能也能增加 **20%</strong> 左右。</p>
+<p>因此，性能上的考量不是非常重要了，而且你也完全可以通过增加更多的节点来获取更高的整体性能。</p>
+<p>而在 stackoverflow 的一个帖子中，发现大家还是力挺 Tyk 的：</p>
+<p><a target="_blank" rel="noopener" href="https://stackoverflow.com/questions/46769814/is-there-a-comprehensive-comparison-between-tyk-vs-kong">https://stackoverflow.com/questions/46769814/is-there-a-comprehensive-comparison-between-tyk-vs-kong</a></p>
+<p>很显然，因为 Kong  的先发优势（2011 年成立 [3]）以及站在了 Nginx 这个巨人的肩膀上，发展非常迅速，目前使用人数以及社区都远远高于 Tyk。Tyk（2015 年成立 [3]） 作为老二，在没有资本压力的情况下，在努力运营社区、维护社区的关系，这点还是不错的。而 Kong 的话，商业气息更重一些，具体就表现在了非常关键的管理界面上：如果你不付钱，那你只能用开源社区的版本。</p>
+<h3 id="其它"><a href="#其它" class="headerlink" title="其它"></a>其它</h3><h4 id="收费"><a href="#收费" class="headerlink" title="收费"></a>收费</h4><p>不知道你注意到了什么，我这个过程中其实很看重的一点就是商业支持：<strong>我不相信一个长久无法获利的工具能够非常优秀，因为这不利于这个项目的长期发展，好东西还是得花钱的</strong>。</p>
+<h4 id="测试"><a href="#测试" class="headerlink" title="测试"></a>测试</h4><p>你需要一个 <strong>Echo server</strong>，简单来说，就是把请求包含的内容给你返回回来，同时还包含所在实例、进程的信息等等。然后，通过在 CI 中直接拉起这一堆镜像，用脚本测试，对比返回结果即可。</p>
+<p>最后，在 CD 中将测试过的配置发布至准生产环境、生产环境即可。</p>
+<p><strong>Echo Server</strong> 可以拿 Node.js 举例：</p>
+<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> path <span class="keyword">from</span> <span class="string">&#x27;path&#x27;</span></span><br><span class="line"><span class="keyword">import</span> os <span class="keyword">from</span> <span class="string">&#x27;os&#x27;</span></span><br><span class="line"><span class="keyword">import</span> Koa <span class="keyword">from</span> <span class="string">&#x27;koa&#x27;</span></span><br><span class="line"><span class="keyword">import</span> <span class="built_in">Promise</span> <span class="keyword">from</span> <span class="string">&#x27;bluebird&#x27;</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">const</span> app = <span class="keyword">new</span> Koa()</span><br><span class="line"></span><br><span class="line">app.poweredBy = <span class="literal">false</span></span><br><span class="line">app.proxy = <span class="literal">true</span></span><br><span class="line"></span><br><span class="line">app.use(<span class="keyword">async</span> (ctx, next) =&gt; &#123;</span><br><span class="line">    <span class="keyword">const</span> &#123; delay &#125; = ctx.query;</span><br><span class="line">    <span class="keyword">await</span> <span class="built_in">Promise</span>.delay(delay || <span class="number">50</span>)</span><br><span class="line">    ctx.set(<span class="string">&#x27;X-Backend&#x27;</span>, <span class="string">`<span class="subst">$&#123;os.hostname()&#125;</span>-<span class="subst">$&#123;process.pid&#125;</span>`</span>);</span><br><span class="line">    ctx.body = &#123;</span><br><span class="line">        delay, </span><br><span class="line">        headers: ctx.headers,</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;);</span><br><span class="line"></span><br><span class="line"><span class="keyword">const</span> port = process.env.PORT || <span class="number">8000</span></span><br><span class="line">app.listen(port)</span><br><span class="line"><span class="built_in">console</span>.log(<span class="string">&#x27;Running site at: http://localhost:%d&#x27;</span>, port)</span><br><span class="line"></span><br><span class="line"><span class="keyword">export</span> <span class="keyword">default</span> app</span><br></pre></td></tr></table></figure>
+<p>这段代码中，我加入了 <code>delay</code> 参数，方便对网关进行性能测试。</p>
+<h4 id="监控"><a href="#监控" class="headerlink" title="监控"></a>监控</h4><p>之前可以用 <a target="_blank" rel="noopener" href="https://github.com/yciabaud/kong-plugin-prometheus">GitHub - yciabaud/kong-plugin-prometheus: Prometheus metrics exporter for Kong API management</a>，但最近的 <a target="_blank" rel="noopener" href="https://github.com/Kong/kong/blob/master/CHANGELOG.md#0140---20180705">0.14.0 版本</a>，官方集成了自己的 <a target="_blank" rel="noopener" href="https://github.com/xizhibei/blog/issues/54">Promethus</a> 监控，因此上面的这个监控插件得拜拜了。</p>
+<p>Tyk 的监控是包含在工具套件里面的，如果要使用它们的东西，你得注册获取免费的 license，并且免费版本只能使用一个 gateway 节点，由于怕它们的销售骚扰，赖得注册去测试了。</p>
+<h4 id="Kong-的-UI"><a href="#Kong-的-UI" class="headerlink" title="Kong 的 UI"></a>Kong 的 UI</h4><p>目前除了官方企业版才提供的管理界面，目前有以下两个选择</p>
+<ul>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/PGBI/kong-dashboard">GitHub - PGBI/kong-dashboard: Dashboard for managing Kong gateway</a></li>
+<li>  <a target="_blank" rel="noopener" href="https://github.com/pantsel/konga">GitHub - pantsel/konga: More than just another GUI to Kong Admin API</a></li>
+</ul>
+<h3 id="Ref"><a href="#Ref" class="headerlink" title="Ref"></a>Ref</h3><ol>
+<li> <a target="_blank" rel="noopener" href="http://microservices.io/patterns/apigateway.html">API gateway pattern</a></li>
+<li> <a target="_blank" rel="noopener" href="https://www.nginx.com/blog/building-microservices-using-an-api-gateway/">Building Microservices: Using an API Gateway</a></li>
+<li> <a target="_blank" rel="noopener" href="http://www.4-traders.com/BANCO-BILBAO-VIZCAYA-ARGE-69719/news/API-Gateways-Kong-vs-Tyk-25590337/">API Gateways: Kong vs. Tyk | 4-Traders</a></li>
+</ol>
+<hr>
+<p>首发于 Github issues: <a target="_blank" rel="noopener" href="https://github.com/xizhibei/blog/issues/82">https://github.com/xizhibei/blog/issues/82</a> ，欢迎 Star 以及 Watch</p>
+<b>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh" target="_blank">署名-非商业性使用-相同方式共享（BY-NC-SA）</a>进行许可</b>
+<br/>
+<b>作者：<a href="https://blog.xizhibei.me/about/" target="_blank">习之北 (@xizhibei)</a></b>
+<br/>
+<b>原链接：<a href="https://blog.xizhibei.me/2018/07/15/microsevices-design-pattern-api-gateway/" target="_blank">https://blog.xizhibei.me/2018/07/15/microsevices-design-pattern-api-gateway/</a></b>
+<br/>
+
+<hr>
+</div><script type="text/javascript" src="/js/share.js?v=1.0.0" async></script><a class="article-share-link" data-url="https://blog.xizhibei.me/2018/07/15/microsevices-design-pattern-api-gateway/" data-id="cko5wqfpg006536shc9tp4jn5" data-qrcode="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAN4AAADeCAAAAAB3DOFrAAACvklEQVR42u3aQZLCMAwEQP7/afayN9ZhJNmBreqcqECI24fYGenxiI9ncFz/Mvl2dd/Xz5sPPDw8vK1Df/3N6kwyrOvP15hkmv4YDx4eHt4xXvWhXB1odQGo4pfn8fDw8L6Atxpuj5RvlPHw8PD+Oy956+/hr7f1eHh4eN/DS8KI+bLRm5qbshY8PDy8mDfZzn7q85H6Hh4eHt6mhoBJaWo+kt44f6/Fw8PDO8DLH7iTEtS8oJVPGR4eHt79vOuHfnUxyCPd/O7lKcbDw8Pbyks2r70CWF7QmrTGFvJpPDw8vGO83oM7v30PUw0p8PDw8O7hzffmeXRbLfnnG/1RFxgeHh7eoPto0t5ULZj1ymC9seHh4eHNeXnJv9cQUG2oqsbBb6YMDw8P7wCvWtaaLAzJ4Hohcnndw8PDwxvwqkO5Z6C9xoXHfKbx8PDw4nw1CXCTDWsyNdUNd3LmDRgPDw9vK69Xgqo2CvSu6kW9hfoeHh4eXr8uH+0/k/N5RJs/7vOxRVQ8PDy8Ma8XEySwXuG/txFfTjoeHh7eAd495ave4PIWq4O5NR4eHt4i58wLS3mgMF8wqqHJm54yPDw8vK28aojQa73qtSaMCm94eHh4t/Cqi8QkbJ0Mvfl+gIeHhzfmzYv6vRA2H0kvnvijDIaHh4d3gJcvDMnDOo8SqqlztYSGh4eHd46XXzZpt6qW0JJJfHMXPDw8vMO8KizfQE+aEpKN+PIMHh4e3lbes3hUy2bVCLjXoLD8Fg8PD+8ArxewTkKKatNANZ5oHnh4eHiD2no1VM3/ZwLLF4bmGwMeHh5ei9drukoe5bsaC5IwYhnj4uHh4X2UN9k0z0OH6r/h4eHhfQMvvzaPdPPmg3yzjoeHh3ealxe9egtJHiJM2gWaTVd4eHh4RV71hT9vF8gf8XkbwYiBh4eHN+X9AMRA5Ckj7oz8AAAAAElFTkSuQmCC">分享</a><div class="tags"><a href="/tags/DevOps/"><i class="fa fa-tag"></i>DevOps</a><a href="/tags/Node-js/"><i class="fa fa-tag"></i>Node.js</a><a href="/tags/%E6%9E%B6%E6%9E%84/"><i class="fa fa-tag"></i>架构</a><a href="/tags/%E5%BE%AE%E6%9C%8D%E5%8A%A1/"><i class="fa fa-tag"></i>微服务</a></div><div class="post-nav"><a class="pre" href="/2018/07/29/https-and-ssl-tls-review/">划一划 HTTPS 以及 SSL/TLS 的重要知识点</a><a class="next" href="/2018/07/01/a-tip-for-mongodb-update-multi-docs/">一个 MongoDB 批量更新的提示</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="https://blog.xizhibei.me"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/%E6%96%87%E6%A1%A3/" style="font-size: 15px;">文档</a> <a href="/tags/%E6%80%BB%E7%BB%93/" style="font-size: 15px;">总结</a> <a href="/tags/%E8%81%8C%E5%9C%BA/" style="font-size: 15px;">职场</a> <a href="/tags/C-C/" style="font-size: 15px;">C/C++</a> <a href="/tags/CMake/" style="font-size: 15px;">CMake</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/%E9%89%B4%E4%B9%A6/" style="font-size: 15px;">鉴书</a> <a href="/tags/%E6%97%85%E8%A1%8C/" style="font-size: 15px;">旅行</a> <a href="/tags/%E7%94%9F%E6%B4%BB/" style="font-size: 15px;">生活</a> <a href="/tags/%E8%A7%86%E9%A2%91%E7%9B%B4%E6%92%AD/" style="font-size: 15px;">视频直播</a> <a href="/tags/MongoDB/" style="font-size: 15px;">MongoDB</a> <a href="/tags/%E6%95%B0%E6%8D%AE%E5%BA%93/" style="font-size: 15px;">数据库</a> <a href="/tags/%E7%9B%91%E6%8E%A7/" style="font-size: 15px;">监控</a> <a href="/tags/%E9%87%8D%E6%9E%84/" style="font-size: 15px;">重构</a> <a href="/tags/DevOps/" style="font-size: 15px;">DevOps</a> <a href="/tags/ELK/" style="font-size: 15px;">ELK</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/Golang/" style="font-size: 15px;">Golang</a> <a href="/tags/%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86/" style="font-size: 15px;">基础知识</a> <a href="/tags/Node-js/" style="font-size: 15px;">Node.js</a> <a href="/tags/TypeScript/" style="font-size: 15px;">TypeScript</a> <a href="/tags/gRPC/" style="font-size: 15px;">gRPC</a> <a href="/tags/%E5%B9%B4%E5%BA%A6%E6%80%BB%E7%BB%93/" style="font-size: 15px;">年度总结</a> <a href="/tags/RabbitMQ/" style="font-size: 15px;">RabbitMQ</a> <a href="/tags/%E6%9E%B6%E6%9E%84/" style="font-size: 15px;">架构</a> <a href="/tags/%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1/" style="font-size: 15px;">系统设计</a> <a href="/tags/kubernetes/" style="font-size: 15px;">kubernetes</a> <a href="/tags/%E5%B7%A5%E4%BD%9C%E6%96%B9%E6%B3%95/" style="font-size: 15px;">工作方法</a> <a href="/tags/%E4%BC%81%E4%B8%9A%E6%96%87%E5%8C%96/" style="font-size: 15px;">企业文化</a> <a href="/tags/Docker/" style="font-size: 15px;">Docker</a> <a href="/tags/ansible/" style="font-size: 15px;">ansible</a> <a href="/tags/Gitlab/" style="font-size: 15px;">Gitlab</a> <a href="/tags/%E6%B5%8B%E8%AF%95/" style="font-size: 15px;">测试</a> <a href="/tags/%E6%B2%9F%E9%80%9A/" style="font-size: 15px;">沟通</a> <a href="/tags/%E7%B3%BB%E7%BB%9F%E6%80%9D%E8%80%83/" style="font-size: 15px;">系统思考</a> <a href="/tags/Prometheus/" style="font-size: 15px;">Prometheus</a> <a href="/tags/%E5%BE%AE%E6%9C%8D%E5%8A%A1/" style="font-size: 15px;">微服务</a> <a href="/tags/%E5%88%9B%E4%B8%9A/" style="font-size: 15px;">创业</a> <a href="/tags/C-x2F-C/" style="font-size: 15px;">C&#x2F;C++</a> <a href="/tags/Angular/" style="font-size: 15px;">Angular</a> <a href="/tags/redis/" style="font-size: 15px;">redis</a> <a href="/tags/%E4%B8%9A%E5%8A%A1/" style="font-size: 15px;">业务</a> <a href="/tags/Helm/" style="font-size: 15px;">Helm</a> <a href="/tags/%E9%85%8D%E7%BD%AE/" style="font-size: 15px;">配置</a> <a href="/tags/Git/" style="font-size: 15px;">Git</a> <a href="/tags/%E7%AE%A1%E7%90%86/" style="font-size: 15px;">管理</a> <a href="/tags/%E5%AE%89%E5%85%A8/" style="font-size: 15px;">安全</a> <a href="/tags/Ubuntu/" style="font-size: 15px;">Ubuntu</a> <a href="/tags/HTTPS/" style="font-size: 15px;">HTTPS</a> <a href="/tags/%E5%8F%8D%E7%88%AC%E8%99%AB/" style="font-size: 15px;">反爬虫</a> <a href="/tags/%E5%B7%A5%E5%85%B7/" style="font-size: 15px;">工具</a> <a href="/tags/%E6%8B%9B%E8%81%98/" style="font-size: 15px;">招聘</a> <a href="/tags/%E9%9D%A2%E8%AF%95/" style="font-size: 15px;">面试</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/%E8%AF%BB%E4%B9%A6/" style="font-size: 15px;">读书</a> <a href="/tags/PGP/" style="font-size: 15px;">PGP</a> <a href="/tags/%E7%BF%BB%E8%AF%91/" style="font-size: 15px;">翻译</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2021/05/01/linux-time-hwclock/">Linux 时间之 hwclock</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/03/28/netflix-no-rules-rules/">不拘一格的网飞</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/03/22/engineer-s-tsundere/">工程师的傲骄</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/02/12/cmake-shared-lib-absolute-path-problem/">CMake 动态链接库绝对路径问题</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/02/12/a-brief-intro-of-rpath/">RPATH 简介以及 CMake 中的处理</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/02/03/https-two-way-authentication-with-certificates/">HTTPS 双向证书认证</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/01/10/poor-mans-profiler/">穷人的程序性能分析器</a></li><li class="post-list-item"><a class="post-list-link" href="/2021/01/01/summary-of-2020/">2020 总结</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/12/20/a-simple-implementation-of-rtsp-server/">RTSP 服务器的简单实现</a></li><li class="post-list-item"><a class="post-list-link" href="/2020/11/21/disk-cache-start-with-a-file-missing-problem/">磁盘缓存：从一次文件丢失问题说起</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div></div></div></div><div class="pure-u-1 pure-u-md-3-4"><div id="footer">Copyright © 2021 <a href="/." rel="nofollow">须臾之学.</a> Powered by<a rel="nofollow" target="_blank" href="https://hexo.io"> Hexo.</a><a rel="nofollow" target="_blank" href="https://github.com/tufu9441/maupassant-hexo"> Theme</a> by<a rel="nofollow" target="_blank" href="https://github.com/pagecho"> Cho.</a></div></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=1.0.0" async></script><script type="text/javascript" src="//cdn.jsdelivr.net/gh/fancyapps/fancybox/dist/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=1.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox/dist/jquery.fancybox.min.css"><script type="text/javascript" src="/js/copycode.js" successtext="复制成功!"></script><link rel="stylesheet" type="text/css" href="/css/copycode.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=1.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=1.0.0"></script></div></body></html>
